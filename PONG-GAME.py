@@ -55,7 +55,8 @@ class Ball:
         self.rect = pygame.Rect(x, y, width, height)
         self.speed_x = 7 * random.choice((1, -1))
         self.speed_y = 7 * random.choice((1, -1))
-        self.y=y
+        self.x = self.original_x = x
+        self.y = self.original_y = y
     def update(self, player, opponent):
         global player_score, opponent_score, score_time
 
@@ -114,8 +115,8 @@ class Opponent:
     def __init__(self, x, y, width, height, speed):
         self.rect = pygame.Rect(x, y, width, height)
         self.speed = speed
-        self.y=y
-
+        self.x = self.original_x = x
+        self.y = self.original_y = y
     def update(self, ball):
         if self.rect.top < ball.rect.y:
             self.rect.y += self.speed
@@ -154,12 +155,19 @@ class Opponent:
 class PlayerPaddle:
     def __init__(self, x, y, width, height):
         self.rect = pygame.Rect(x, y, width, height)
-        self.y= y
+        self.x = self.original_x = x
+        self.y = self.original_y = y
         self.speed = 0
 
     def move(self, speed):
         self.speed = speed
+        self.y += speed
 
+        # Keep paddle within screen boundaries
+        if self.rect.top <= 0:
+            self.rect.top = 0
+        if self.rect.bottom >= screen_height:
+            self.rect.bottom = screen_height
     def update(self):
         self.rect.y += self.speed
 
@@ -231,43 +239,36 @@ def main(genomes,config):
         ge.append(genome)
     opponent= Opponent(10, screen_height/2 - 70, 10, 140, 7)
     ball = Ball(screen_width/2 - 15, screen_height/2 - 15, 30, 30)
+    
     while len(paddles) > 0:
         #	Handling input
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
-        if score_time:
-            start_time = time.time()			
+        if score_time:			
             ball.start()
-        # Get inputs for the AI
-       
-        
-        
         # AI output
-        for paddle, net in zip(paddles, nets):
-            output = net.activate((ball.y, paddle.y, opponent.y))
-            # move_up = output[0] > 0.5
-            # if move_up:
-            #     paddle.move(-7)
-            # else:
-            #     paddle.move(7)
-            # paddle.update()
-            if ball.rect.colliderect(paddle.rect):
-              genome.fitness += 5 
-            scaled_speed = output[0] * 14 - 7  # Scale to -7 to 7
-            paddle.move(scaled_speed)
-            paddle.update()
-        # Move the player's paddle based on AI's decision
-        for paddle in paddles:
+        for paddle, net, genome in zip(paddles, nets,ge):
+            output = net.activate((paddle.y,abs(paddle.x - ball.rect.x), ball.rect.y))
+            decision = output.index(max(output))
+            print(decision, paddle.y,abs(paddle.x - ball.rect.x), ball.rect.y)
+            valid = True
             
-
+            if decision == 0:  # Don't move
+                genome.fitness -= 1  # we want to discourage this
+            elif decision == 1:  # Move up
+                valid = paddle.move(-7) 
+                paddle.update()
+            else:  # Move down
+                valid = paddle.move(7)
+                paddle.update()
+            if not valid:  # If the movement makes the paddle go off the screen punish the AI
+                genome.fitness -= 1
+            if ball.rect.colliderect(paddle.rect):
+                genome.fitness += 5 
             ball.update(paddle, opponent)
             opponent.update(ball)
-        
-        
-        
-        for paddle in paddles:
             if ball.rect.left <= 0 or ball.rect.right >= screen_width:
                 
                 genome.fitness -=2
@@ -275,7 +276,6 @@ def main(genomes,config):
                 ge.pop(paddles.index(paddle))
                 paddles.pop(paddles.index(paddle))
 
-        #game visuals
         screen.fill(bg_color)
         for paddle in paddles:
             pygame.draw.rect(screen, player_color, paddle.rect)
@@ -285,24 +285,19 @@ def main(genomes,config):
                     
 
         player_text = game_font.render(f"{player_score}", False, white)
-        screen.blit(player_text, (660, 470))
+        screen.blit(player_text, (680, 470))
 
         opponent_text = game_font.render(f"{opponent_score}", False, white)
-        screen.blit(opponent_text, (600, 470))
+        screen.blit(opponent_text, (580, 470))
 
         gen_score = game_font.render(f"{gen}", False, white)
         screen.blit(gen_score, (630, 450))
 
         #updating the gamme window
         pygame.display.flip()
-        clock.tick(75)
+        clock.tick(120)
 
 def run(config_file):
-    """
-    runs the NEAT algorithm to train a neural network to play flappy bird.
-    :param config_file: location of config file
-    :return: None
-    """
     config = neat.config.Config(neat.DefaultGenome, neat.DefaultReproduction,
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_file)
@@ -317,7 +312,7 @@ def run(config_file):
     #p.add_reporter(neat.Checkpointer(5))
 
     # Run for up to 50 generations.
-    winner = p.run(main, 30)
+    winner = p.run(main, 10)
 
     # show final stats
     print('\nBest genome:\n{!s}'.format(winner))
